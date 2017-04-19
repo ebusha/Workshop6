@@ -41,7 +41,7 @@ function getFeedItemSync(feedItemId) {
   // FeedItems in the DB, we would
   // need to check the type and have logic for each type.
   feedItem.contents.author = readDocument('users', 
-	                                  feedItem.contents.author);
+                                          feedItem.contents.author);
   // Resolve comment author.
   feedItem.comments.forEach((comment) => {
     comment.author = readDocument('users', comment.author);
@@ -168,7 +168,7 @@ app.post('/feeditem',
            // (The requester must be the author of the update.)
            if (fromUser === body.userId) {
              var newUpdate = postStatusUpdate(body.userId, body.location, 
-		                              body.contents);
+                                              body.contents);
              // When POST creates a new resource, we should tell the client about it
              // in the 'Location' header and use status code 201.
              res.status(201);
@@ -328,11 +328,97 @@ app.post('/search', function(req, res) {
     res.send(feedItemIDs.filter((feedItemID) => {
       var feedItem = readDocument('feedItems', feedItemID);
       return feedItem.contents.contents
-	             .toLowerCase()
-		     .indexOf(queryText) !== -1;
+                     .toLowerCase()
+                     .indexOf(queryText) !== -1;
     }).map(getFeedItemSync));
   } else {
     // 400: Bad Request.
     res.status(400).end();
+  }
+});
+
+function postComment(feedItemId, author, contents) {
+  var feedItem = readDocument('feedItems', feedItemId);
+  feedItem.comments.push({
+    "author": author,
+    "contents": contents,
+    "postDate": new Date().getTime(),
+    "likeCounter": []
+  });
+  writeDocument('feedItems', feedItem);
+  // Return a resolved version of the feed item.
+  return getFeedItemSync(feedItemId);
+}
+
+app.post('/feeditem/:feeditemid/commentthread', function(req, res) {
+  var body = req.body;
+  var fromUser = getUserIdFromToken(req.get('Authorization'));
+
+  if (fromUser === body.author) {
+    var newUpdate = postComment(body.feedItemId, body.author, body.contents, body.cb);
+    res.status(201);
+    res.set('Location', '/feeditem/' + newUpdate._id + '/commentthread');
+    res.send(newUpdate);
+  } else {
+    res.status(401).end();
+  }
+});
+
+/**
+ * Adds a 'like' to a comment.
+ */
+function likeComment(feedItemId, commentIdx, userId) {
+  var feedItem = readDocument('feedItems', feedItemId);
+  var comment = feedItem.comments[commentIdx];
+  comment.likeCounter.push(userId);
+  writeDocument('feedItems', feedItem);
+  comment.author = readDocument('users', comment.author);
+  return comment;
+}
+
+/**
+ * Removes a 'like' from a comment.
+ */
+function unlikeComment(feedItemId, commentIdx, userId) {
+  var feedItem = readDocument('feedItems', feedItemId);
+  var comment = feedItem.comments[commentIdx];
+  var userIndex = comment.likeCounter.indexOf(userId);
+  if (userIndex !== -1) {
+    comment.likeCounter.splice(userIndex, 1);
+    writeDocument('feedItems', feedItem);
+  }
+  comment.author = readDocument('users', comment.author);
+  return comment;
+}
+
+app.put('/feeditem/:feeditemid/:commentidx/likelist/:userid', function(req, res) {
+  var fromUser = getUserIdFromToken(req.get('Authorization'));
+  // Convert params from string to number.
+  var feedItemId = parseInt(req.params.feeditemid, 10);
+  var commentIdx = parseInt(req.params.commentidx, 10);
+  var userId = parseInt(req.params.userid, 10);
+  if (fromUser === userId) {
+    var comment = likeComment(feedItemId, commentIdx, userId);
+    // Return a resolved version of the likeCounter
+    res.send(comment);
+  } else {
+    // 401: Unauthorized.
+    res.status(401).end();
+  }
+});
+
+app.delete('/feeditem/:feeditemid/:commentidx/likelist/:userid', function(req, res) {
+  var fromUser = getUserIdFromToken(req.get('Authorization'));
+  // Convert params from string to number.
+  var feedItemId = parseInt(req.params.feeditemid, 10);
+  var commentIdx = parseInt(req.params.commentidx, 10);
+  var userId = parseInt(req.params.userid, 10);
+  if (fromUser === userId) {
+    var comment = unlikeComment(feedItemId, commentIdx, userId);
+    // Return a resolved version of the likeCounter
+    res.send(comment);
+  } else {
+    // 401: Unauthorized.
+    res.status(401).end();
   }
 });
